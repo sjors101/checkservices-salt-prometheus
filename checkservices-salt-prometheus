@@ -1,0 +1,59 @@
+#!/usr/bin/python
+from prometheus_client import start_http_server, Gauge
+import subprocess, time
+
+# Define when to poll for status in seconds
+poller = 60
+# Port which the prometheus_client will run
+webserverport = 7777
+# insert hostname and application for salt to check
+microservices = {'minion1': 'ssh',
+                 'minion2': 'ssh'}
+
+
+def checkservice(host, application):
+    try:
+        salt_out = subprocess.check_output("salt " + str(host) + " cmd.run 'service " + str(application) + " status'",
+                                           shell=True, stderr=subprocess.STDOUT)
+        if ("Running" in salt_out) or ("start/running" in salt_out):
+            # return "INFO: App is working"
+            return 1
+        else:
+            # return "ERROR: Something is wrong:," salt_out
+            return 3
+    except subprocess.CalledProcessError as e:
+        if "Not running" in e.output:
+            # return "WARN: App is not running"
+            return 0
+        elif "No minions matched" in e.output:
+            # return "ERROR: Host not found"
+            return 3
+        else:
+            # return "ERROR: Something is wrong:", e.output
+            return 3
+
+
+if __name__ == '__main__':
+    # We need to predifine the gauge's before starting the webserver + fixformat
+    gauge_list = list()
+    for host, application in microservices.items():
+        replace_chars = ".-"
+        for c in replace_chars:
+            host_format = host.replace(c, "_")
+        gauge_list.append(Gauge(host_format, 'service healthcheck'))
+
+    # Start up the server to expose the metrics.
+    start_http_server(webserverport)
+
+    while True:
+        micro_count = 0
+        # Looping the services and check them one by one
+        for gauge in gauge_list:
+            host = (list(microservices.keys())[micro_count])
+            application = (list(microservices.values())[micro_count])
+            micro_count += 1
+            salt_result = (checkservice(host, application))
+            gauge.set(salt_result)
+
+        # wait before run again
+        time.sleep(poller)
